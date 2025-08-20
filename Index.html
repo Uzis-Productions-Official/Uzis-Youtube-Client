@@ -1,59 +1,117 @@
 <!DOCTYPE html>
-<html>
+<html lang="en">
 <head>
-  <title>F1shtube Channel Viewer</title>
+  <meta charset="UTF-8">
+  <title>Uzi Tube</title>
   <style>
-    body { background:#111; color:#eee; font-family:sans-serif; padding:20px; }
-    input { width:400px; }
-    #results { display:grid; grid-template-columns:repeat(auto-fill,200px); gap:10px; margin-top:20px; }
-    .video { background:#222; padding:10px; border-radius:8px; cursor:pointer; }
+    body { margin:0; font-family:Arial, sans-serif; background:#0a0a0f; color:#fff; }
+    header { background:#2b0037; padding:10px; display:flex; align-items:center; }
+    h1 { margin:0; font-size:22px; color:#b76eff; }
+    #searchBar { margin-left:20px; flex:1; }
+    #searchInput { width:100%; padding:6px; border:none; border-radius:6px; }
+    #results { display:grid; grid-template-columns:repeat(auto-fill,minmax(260px,1fr)); gap:10px; padding:10px; }
+    .video { background:#1a1a1f; border-radius:8px; padding:8px; cursor:pointer; }
     .video img { width:100%; border-radius:6px; }
-    .video-title { font-size:13px; margin-top:5px; }
-    iframe { margin-top:20px; border-radius:12px; }
+    #player { width:100%; height:480px; border:none; display:none; margin-top:10px; }
+    #subscriptions, #favorites { padding:10px; }
+    button { margin:2px; padding:4px 8px; border:none; border-radius:6px; background:#b76eff; color:#fff; cursor:pointer; }
+    button:hover { background:#9c4fd6; }
   </style>
 </head>
 <body>
-  <h1>F1shtube (Channel Viewer)</h1>
-  <input id="channel" type="text" placeholder="Enter channel ID">
-  <button onclick="loadChannel()">Load Channel</button>
+  <header>
+    <h1>Uzi Tube</h1>
+    <div id="searchBar">
+      <input id="searchInput" placeholder="Paste channel link or @handle...">
+    </div>
+    <button onclick="loadChannel()">Load</button>
+  </header>
+
+  <iframe id="player" allowfullscreen></iframe>
+
+  <section id="subscriptions">
+    <h2>Subscriptions</h2>
+    <div id="subsList"></div>
+  </section>
+
+  <section id="favorites">
+    <h2>Favorites</h2>
+    <div id="favList"></div>
+  </section>
 
   <div id="results"></div>
-  <div id="player"></div>
 
   <script>
-    async function loadChannel() {
-      const chan = document.getElementById("channel").value.trim();
-      const url = `https://www.youtube.com/feeds/videos.xml?channel_id=${chan}`;
-      const res = await fetch(url);
-      const text = await res.text();
+    const subsKey="uzi_subs", favKey="uzi_favs";
+    let currentChannel="";
 
-      const parser = new DOMParser();
-      const xml = parser.parseFromString(text, "application/xml");
-      const entries = [...xml.querySelectorAll("entry")];
+    function saveSubs(list){ localStorage.setItem(subsKey, JSON.stringify(list)); }
+    function loadSubs(){ return JSON.parse(localStorage.getItem(subsKey)||"[]"); }
+    function saveFavs(list){ localStorage.setItem(favKey, JSON.stringify(list)); }
+    function loadFavs(){ return JSON.parse(localStorage.getItem(favKey)||"[]"); }
 
-      const results = document.getElementById("results");
-      results.innerHTML = "";
+    function updateSubsUI(){
+      const subs=loadSubs(); const box=document.getElementById("subsList");
+      box.innerHTML=""; subs.forEach(c=>{
+        const b=document.createElement("button");
+        b.textContent=c.name; b.onclick=()=>fetchFeed(c.id); box.appendChild(b);
+      });
+    }
+    function updateFavsUI(){
+      const favs=loadFavs(); const box=document.getElementById("favList");
+      box.innerHTML=""; favs.forEach(v=>{
+        const b=document.createElement("button");
+        b.textContent=v.title; b.onclick=()=>playVideo(v.id); box.appendChild(b);
+      });
+    }
 
-      entries.forEach(entry => {
-        const id = entry.querySelector("yt\\:videoId").textContent;
-        const title = entry.querySelector("title").textContent;
-        const thumb = `https://img.youtube.com/vi/${id}/mqdefault.jpg`;
+    async function loadChannel(){
+      const input=document.getElementById("searchInput").value.trim();
+      if(!input) return;
+      let id="";
+      if(input.includes("channel/")) id=input.split("channel/")[1].split(/[/?]/)[0];
+      else if(input.startsWith("@")){
+        const html=await fetch("https://www.youtube.com/"+input).then(r=>r.text());
+        const m=html.match(/"channelId":"(UC[\\w-]+)"/);
+        if(m) id=m[1];
+      }
+      if(id) fetchFeed(id);
+    }
 
-        const div = document.createElement("div");
-        div.className = "video";
-        div.innerHTML = `<img src="${thumb}"><div class="video-title">${title}</div>`;
-        div.onclick = () => play(id);
+    async function fetchFeed(channelId){
+      currentChannel=channelId;
+      const url=`https://www.youtube.com/feeds/videos.xml?channel_id=${channelId}`;
+      const res=await fetch(url); const text=await res.text();
+      const xml=new DOMParser().parseFromString(text,"text/xml");
+      const entries=xml.querySelectorAll("entry");
+      const results=document.getElementById("results"); results.innerHTML="";
+      entries.forEach(e=>{
+        const title=e.querySelector("title").textContent;
+        const vid=e.querySelector("yt\\:videoId, videoId").textContent;
+        const thumb=e.querySelector("media\\:thumbnail, thumbnail").getAttribute("url");
+        const div=document.createElement("div"); div.className="video";
+        div.innerHTML=`<img src="${thumb}"><p>${title}</p>
+          <button onclick='favVideo("${vid}","${title.replace(/"/g,"&quot;")}")'>★ Fav</button>
+          <button onclick='subChannel("${channelId}")'>+ Sub</button>`;
+        div.onclick=()=>playVideo(vid);
         results.appendChild(div);
       });
     }
 
-    function play(id) {
-      document.getElementById("player").innerHTML =
-        `<iframe width="640" height="390"
-          src="https://www.youtube.com/embed/${id}"
-          frameborder="0"
-          allowfullscreen></iframe>`;
+    function playVideo(id){
+      const p=document.getElementById("player");
+      p.src=`https://www.youtube.com/embed/${id}?autoplay=1`;
+      p.style.display="block"; window.scrollTo(0,0);
     }
+
+    function favVideo(id,title){
+      const favs=loadFavs(); if(!favs.find(v=>v.id===id)){ favs.push({id,title}); saveFavs(favs); updateFavsUI(); }
+    }
+    function subChannel(id){
+      const subs=loadSubs(); if(!subs.find(c=>c.id===id)){ subs.push({id,name:id.slice(0,6)+"..."}); saveSubs(subs); updateSubsUI(); }
+    }
+
+    updateSubsUI(); updateFavsUI();
   </script>
 </body>
 </html>
